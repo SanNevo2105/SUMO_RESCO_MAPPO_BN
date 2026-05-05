@@ -19,7 +19,7 @@ from MAPPO.networks.actor import ActorNetwork
 from MAPPO.training.trainer import MAPPOTrainer
 from MAPPO.utils.reward_normalizer import RewardNormalizer
 
-from MAPPO_BNTT.networks.critic import CentralizedCriticBN
+from MAPPO_BN.networks.critic import CentralizedCriticBN
 
 
 class MAPPOBNTTTrainer(MAPPOTrainer):

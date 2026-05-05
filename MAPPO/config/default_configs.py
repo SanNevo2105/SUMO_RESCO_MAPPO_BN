@@ -103,7 +103,7 @@ def get_fast_test_config() -> ExperimentConfig:
     """Get configuration for fast testing (no GUI, shorter but with vehicles)."""
     config = get_default_config()
     # begin_time=23400, num_seconds=5600 inherited from get_default_config()
-    config.training.max_epoch = 10
+    config.training.max_epoch = 20
     config.training.step_per_epoch = 2000
     config.training.n_train_envs = 4
     config.training.test_interval = 1

@@ -87,7 +87,7 @@ def get_critic_bn_fast_test_config() -> ExperimentConfig:
     schedule settings, making epoch-to-epoch comparison valid.
     """
     config = get_critic_bn_config()
-    config.training.max_epoch = 10
+    config.training.max_epoch = 20
     config.training.step_per_epoch = 2000
     config.training.n_train_envs = 4
     config.training.test_interval = 1

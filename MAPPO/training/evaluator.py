@@ -84,12 +84,18 @@ def evaluate_policy(
             episode_waiting_times.append(avg_waiting)
             episode_queue_lengths.append(avg_queue)
     
+    # [DIAG] Print per-seed rewards to expose bimodal attractor flipping
+    print(f"  [DIAG] per-seed eval rewards: {[round(r,1) for r in episode_rewards]}")
+    print(f"  [DIAG] per-seed waiting times: {[round(w,1) for w in episode_waiting_times]}")
+
     # Compute statistics
     results = {
         'mean_reward': np.mean(episode_rewards),
         'std_reward': np.std(episode_rewards),
         'mean_length': np.mean(episode_lengths),
         'std_length': np.std(episode_lengths),
+        # [DIAG] expose the full distribution so callers can log it
+        'per_seed_rewards': episode_rewards,
     }
     
     if episode_waiting_times:

@@ -22,9 +22,44 @@ Usage:
 import argparse
 import os
 import sys
+import time
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+
+class _TeeStream:
+    """Write to both *stream* and *logfile* simultaneously.
+
+    Used to mirror stdout/stderr to a ``run.log`` file so every line
+    printed during a training run is also persisted to disk for later
+    inspection.
+    """
+
+    def __init__(self, stream, logfile):
+        self._stream = stream
+        self._logfile = logfile
+
+    def write(self, data):
+        self._stream.write(data)
+        self._logfile.write(data)
+        self._logfile.flush()
+
+    def flush(self):
+        self._stream.flush()
+        self._logfile.flush()
+
+    def fileno(self):
+        # Needed so tqdm / subprocess probing doesn't crash.
+        return self._stream.fileno()
+
+    def isatty(self):
+        return self._stream.isatty()
+
+    # Forward any other attribute access to the underlying stream so that
+    # libraries that call stream.encoding / stream.errors etc. still work.
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
 
 # Auto-detect SUMO_HOME / PROJ_DATA from the installed sumo package so
 # collaborators don't need to set shell environment variables manually.
@@ -189,7 +224,7 @@ def _load_config_from_yaml(yaml_path: str):
     use_critic_bn = bool(raw.get("network", {}).get("use_critic_bn", False))
 
     if use_critic_bn:
-        from MAPPO_BNTT.config.default_configs import BNNetworkConfig
+        from MAPPO_BN.config.default_configs import BNNetworkConfig
         from MAPPO.config.config import (
             SumoConfig, MAPPOConfig, TrainingConfig, LoggingConfig,
         )
@@ -236,7 +271,7 @@ def main():
         # n_test_envs=5) as the baseline fast-test.  Without this, --fast-test
         # alone would silently load get_fast_test_config() (baseline NetworkConfig)
         # and the BN critic would never be created.
-        from MAPPO_BNTT.config.default_configs import get_critic_bn_fast_test_config
+        from MAPPO_BN.config.default_configs import get_critic_bn_fast_test_config
         print("Using critic-BN fast-test configuration (BNTT experiment)")
         config = get_critic_bn_fast_test_config()
     elif args.fast_test:
@@ -244,7 +279,7 @@ def main():
         config = get_fast_test_config()
     elif use_critic_bn:
         # --use-critic-bn with no explicit --config → load BN preset
-        from MAPPO_BNTT.config.default_configs import get_critic_bn_config
+        from MAPPO_BN.config.default_configs import get_critic_bn_config
         print("Using critic-BN configuration (BNTT experiment)")
         config = get_critic_bn_config()
     else:
@@ -287,7 +322,7 @@ def main():
 
     # ── Select trainer class ─────────────────────────────────────────────────
     if use_critic_bn:
-        from MAPPO_BNTT.training.trainer import MAPPOBNTTTrainer
+        from MAPPO_BN.training.trainer import MAPPOBNTTTrainer
         TrainerClass = MAPPOBNTTTrainer
         variant_label = "critic-BN (BNTT experiment)"
     else:
@@ -308,6 +343,33 @@ def main():
     print(f"W&B logging:         {config.logging.use_wandb}")
     print("=" * 70 + "\n")
     
+    # ── Pin experiment name so trainer and log file share the same directory ──
+    # The trainer would otherwise derive the name from time.time() internally,
+    # making it impossible to know the log path before construction.
+    if config.logging.experiment_name is None:
+        if use_critic_bn:
+            config.logging.experiment_name = f"mappo_bn_{int(time.time())}"
+        else:
+            config.logging.experiment_name = f"mappo_{int(time.time())}"
+
+    exp_log_dir = os.path.join(
+        config.logging.log_dir or "logs",
+        config.logging.experiment_name,
+    )
+    os.makedirs(exp_log_dir, exist_ok=True)
+
+    run_log_path = os.path.join(exp_log_dir, "run.log")
+    _log_file = open(run_log_path, "w", buffering=1)   # line-buffered
+
+    # Install tee streams — every print() / traceback goes to both terminal
+    # and run.log simultaneously.
+    _orig_stdout = sys.stdout
+    _orig_stderr = sys.stderr
+    sys.stdout = _TeeStream(sys.stdout, _log_file)
+    sys.stderr = _TeeStream(sys.stderr, _log_file)
+
+    print(f"Run log: {run_log_path}")
+
     # ── Create trainer and run ───────────────────────────────────────────────
     trainer = TrainerClass(config)
     
@@ -326,6 +388,11 @@ def main():
         if hasattr(trainer, 'test_env'):
             trainer.test_env.close()
         print("\nEnvironments closed")
+        # Restore original streams and close log file
+        sys.stdout = _orig_stdout
+        sys.stderr = _orig_stderr
+        _log_file.close()
+        print(f"Run log saved → {run_log_path}")
 
 
 if __name__ == "__main__":

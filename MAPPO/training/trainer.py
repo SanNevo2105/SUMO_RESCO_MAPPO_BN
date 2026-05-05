@@ -428,6 +428,13 @@ class MAPPOTrainer:
             # Compute GAE advantages and value targets (process_fn also recomputes logp_old)
             batch = policy.process_fn(batch, buffer=None, indices=None)
 
+            # [DIAG] Track reward normalizer convergence — the running mean/std shift
+            # most in the first 20-30 epochs; a still-moving normalizer changes critic
+            # regression targets every epoch and prevents critic convergence.
+            if agent_idx == 0 and self._reward_normalizer is not None:
+                rn = self._reward_normalizer
+                print(f"  [DIAG] reward_normalizer: count={rn.count}  mean={rn.mean:.4f}  std={rn.std:.4f}")
+
             # FIX (Root Cause #1): Only the first agent updates the shared critic.
             # All other agents update only their own actor.  This ensures the critic
             # optimizer is stepped exactly once per mini-batch instead of N_agents
