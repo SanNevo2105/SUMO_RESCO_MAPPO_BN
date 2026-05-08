@@ -239,14 +239,43 @@ class MAPPOTrainer:
         print("=" * 60)
         
         config = self.config.training
-        
+
+        # Fix 5 — Pre-warm the Welford reward normalizer before the first
+        # gradient step.  In the diagnostic run the normalizer std jumped
+        # 105% (0.83 → 1.71) between epochs 1 and 2 because only ~33 k
+        # samples had been seen after epoch 1.  That rescales the critic's
+        # regression targets mid-training and destabilises early learning.
+        # 5 warm-up episodes (~33 k steps) are enough to seed the running
+        # statistics so the std is already near its long-run value before
+        # any gradient is computed.  The collected trajectories are discarded
+        # (no policy update) — only the normalizer stats are retained.
+        if self._reward_normalizer is not None:
+            print("Pre-warming reward normalizer (5 episodes, no gradient update)...")
+            _warmup = self._collect_episodes(self.train_env, n_episode=5)
+            print(f"  Normalizer after warmup: {self._reward_normalizer}")
+            del _warmup
+
         epoch_pbar = tqdm(range(config.max_epoch), desc="Training", unit="epoch")
         for epoch in epoch_pbar:
             self.current_epoch = epoch
             epoch_start_time = time.time()
-            
+
+            # Fix 2 — Linear entropy annealing.
+            # Decay ent_coef from its configured value to 10 % of that value
+            # over max_epoch epochs.  At epoch 0 the coefficient is unchanged;
+            # at the final epoch it equals 0.1 * ent_coef_initial.
+            # Rationale: entropy stayed at ~0.96 throughout 20 epochs in the
+            # diagnostic run.  A still-stochastic policy at epoch 15 randomly
+            # picked phase sequences that tipped seeds into gridlock (epochs
+            # 16-17).  Decaying entropy makes the policy commit to the clear
+            # attractor it has learned rather than continuing to explore.
+            _decay = 1.0 - 0.9 * epoch / max(config.max_epoch - 1, 1)
+            _ent_coef_now = self.config.mappo.ent_coef * _decay
+            for _p in self.policy_manager.policies.values():
+                _p.ent_coef = _ent_coef_now
+
             # Collect training data
-            print(f"\nEpoch {epoch + 1}/{config.max_epoch}")
+            print(f"\nEpoch {epoch + 1}/{config.max_epoch}  (ent_coef={_ent_coef_now:.5f})")
             print("-" * 60)
             
             collect_result = self._collect_episodes(

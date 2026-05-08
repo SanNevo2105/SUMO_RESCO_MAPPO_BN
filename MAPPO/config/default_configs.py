@@ -33,11 +33,18 @@ def get_default_config() -> ExperimentConfig:
             use_orthogonal_init=True
         ),
         mappo=MAPPOConfig(
-            # lr_actor lowered 3e-4 → 1e-4 to prevent large actor updates
-            # from flipping the policy between the bimodal cologne3 traffic
-            # attractors ("clear" vs "gridlock") in a single gradient step.
+            # lr_actor=1e-4.  A 3e-5 trial (run mappo_1778046430) caused
+            # clip_frac to collapse toward 0 (mean 0.00245 vs 0.00905),
+            # leaving the policy unable to escape the gridlock attractor for
+            # 9 epochs.  1e-4 is the minimum rate needed to escape within 20
+            # epochs while staying below the bimodal boundary-crossing threshold.
             lr_actor=1e-4,
-            lr_critic=1e-3,
+            # lr_critic halved 1e-3 → 5e-4 to compensate for repeat_per_collect
+            # doubling (2 → 4).  Twice as many gradient steps per epoch at the
+            # same lr would double the effective per-epoch critic update magnitude,
+            # making oscillation worse.  5e-4 keeps the per-epoch critic step size
+            # the same as the original (repeat=2, lr=1e-3) baseline.
+            lr_critic=5e-4,
             gamma=0.99,
             gae_lambda=0.95,
             eps_clip=0.2,
@@ -62,19 +69,27 @@ def get_default_config() -> ExperimentConfig:
         training=TrainingConfig(
             max_epoch=100,
             step_per_epoch=10000,
-            # 30 episodes averages out the bimodal gridlock/no-gridlock variance
-            # that caused large training-reward swings with only 10 episodes.
-            episode_per_collect=30,
+            # episode_per_collect raised 30 → 50 (Fix 4) so the batch gradient
+            # averages over more bimodal traffic realizations per update, giving
+            # a more stable policy-gradient direction and reducing the chance of
+            # the actor stepping toward gridlock due to an all-clear batch.
+            episode_per_collect=50,
             batch_size=256,
-            # 2 passes reduce critic overfitting to a single stale collect batch,
-            # smoothing the critic-loss spike seen between epochs.
-            repeat_per_collect=2,
+            # repeat_per_collect raised 2 → 4: more gradient steps per collected
+            # batch drive the critic closer to convergence each epoch, reducing
+            # the epoch-to-epoch oscillation in critic_loss (mean |Δloss| 2.98
+            # across both prior runs with repeat=2).  At episode_per_collect=50
+            # this gives 50×4=200 mini-batch pass-throughs per epoch vs the
+            # original 30×4=120, providing strictly more critic fitting without
+            # additional environment interaction.
+            repeat_per_collect=4,
             n_train_envs=4,
-            # n_test_envs raised 2 → 5: with only 2 fixed-seed eval episodes
-            # over a bimodal env the reported mean can only take 3 values
-            # (-326, -163, -0.9), making evaluation appear as binary jumps.
-            # 5 episodes spread the mean across more of the distribution.
-            n_test_envs=5
+            # n_test_envs raised 5 → 20 (Fix 1): with only 5 fixed-seed eval
+            # episodes a single seed flipping attractor state moves the reported
+            # mean reward by ~275 points.  20 seeds reduces that sensitivity by
+            # 2× (variance ∝ 1/√N), making the eval curve reflect true policy
+            # quality rather than which seeds happened to be in gridlock.
+            n_test_envs=20
         ),
         logging=LoggingConfig(
             project="sumo-mappo-traffic",
