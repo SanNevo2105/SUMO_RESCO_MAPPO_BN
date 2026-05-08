@@ -6,3 +6,5 @@ miscellaneous/
 
 # Training logs and checkpoints
 logs/
+MAPPO_venv.zip
+*.zip
